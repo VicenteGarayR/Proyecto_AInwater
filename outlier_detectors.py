@@ -119,10 +119,10 @@ class DiffDetector(OutlierDetector):
     def __init__(self, lambda_centrada=None, k=0, quantile_low=0.01, quantile_high=0.999):
         """
         Args:
-            lambda_centrada: Threshold para diff_centrada (si None, se calcula desde cuantiles)
+            lambda_centrada: Multiplicador de std para threshold de diff_centrada
             k: Threshold para diferencia absoluta con dato anterior (si 0, se calcula desde cuantiles)
-            quantile_low: Cuantil inferior para calcular lambda_centrada y k
-            quantile_high: Cuantil superior para calcular lambda_centrada y k
+            quantile_low: Cuantil inferior para calcular k
+            quantile_high: Cuantil superior para calcular k
         """
         self.lambda_centrada = lambda_centrada
         self.k = k
@@ -151,14 +151,19 @@ class DiffDetector(OutlierDetector):
         n = len(data)
         serie = pd.Series(data)
         
-        # Calcular lambda_centrada si no está especificado
+        # Calcular diff_centrada de toda la serie
+        diff_centrada_total = self.conseguir_diff_centrada(data)
+        
+        # Calcular STD de diff_centrada
+        valid_diff = diff_centrada_total[np.isfinite(diff_centrada_total)]
+        if len(valid_diff) > 0:
+            std_diff_centrada = np.std(valid_diff)
+        else:
+            std_diff_centrada = 1.0
+        
+        # Lambda_centrada por defecto si no se especifica
         if self.lambda_centrada is None or self.lambda_centrada == 0:
-            diff_centrada_initial = self.conseguir_diff_centrada(data)
-            valid_diff = diff_centrada_initial[np.isfinite(diff_centrada_initial)]
-            if len(valid_diff) > 0:
-                lambda_centrada = np.quantile(valid_diff, self.quantile_high) - np.quantile(valid_diff, self.quantile_low)
-            else:
-                lambda_centrada = 1.0
+            lambda_centrada = 12  # Valor por defecto
         else:
             lambda_centrada = self.lambda_centrada
         
@@ -172,7 +177,12 @@ class DiffDetector(OutlierDetector):
         else:
             k = self.k
         
+        # Calcular threshold
+        threshold_diff_centrada = lambda_centrada * std_diff_centrada
+        
+        print(f"    STD diff_centrada: {std_diff_centrada:.4f}")
         print(f"    Lambda centrada: {lambda_centrada:.4f}")
+        print(f"    Threshold (lambda * std): {threshold_diff_centrada:.4f}")
         print(f"    K: {k:.4f}")
         
         # Inicializar
@@ -187,8 +197,17 @@ class DiffDetector(OutlierDetector):
             diff_centrada = self.conseguir_diff_centrada(valores_sin_outliers)
             diff = pd.Series(valores_sin_outliers).diff().values
             
+            # Recalcular std en cada iteración
+            valid_diff_iter = diff_centrada[np.isfinite(diff_centrada)]
+            if len(valid_diff_iter) > 0:
+                std_iter = np.std(valid_diff_iter)
+            else:
+                std_iter = std_diff_centrada
+            
+            threshold_iter = lambda_centrada * std_iter
+            
             # Detectar outliers
-            is_outlier_diff_centrada = diff_centrada >= lambda_centrada
+            is_outlier_diff_centrada = diff_centrada >= threshold_iter
             is_outlier_diff = np.abs(diff) >= k
             
             is_outlier = is_outlier_diff_centrada | is_outlier_diff
@@ -232,5 +251,7 @@ class DiffDetector(OutlierDetector):
             'diff_score': np.abs(diff_final),
             'valores_sin_outliers': valores_sin_outliers,
             'lambda_centrada_usado': lambda_centrada,
+            'std_usado': std_diff_centrada,
+            'threshold_usado': threshold_diff_centrada,
             'k_usado': k
         }
